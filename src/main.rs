@@ -1,107 +1,164 @@
-use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
+#![allow(unused)]
 
-// type fork_mutex = Arc<Mutex<_>>
+use std::env::args;
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
+use std::{process, thread};
+// use tokio::*;
+// use tokio::{client, Result};
 
-// struct Fork {
-//     fork :fork_mutex,
-// };
+struct ForksPool {
+    forks: Vec<Arc<Mutex<usize>>>,
+}
 
-// impl Fork {
-//
-// }
+impl ForksPool {
+    fn init(nums_of_philos: usize) -> Self {
+        let forks: Vec<Arc<Mutex<usize>>> = (0..nums_of_philos)
+            .map(|_| Arc::new(Mutex::new(0)))
+            .collect();
+        ForksPool { forks }
+    }
+    fn get(&self, id: usize) -> Arc<Mutex<usize>> {
+        Arc::clone(&self.forks[id])
+    }
 
-// #[derive(Debug, Default)]
-// struct Instructions {
-//     time_to_sleep: Duration,
-//     time_to_eat: Duration,
-//     time_to_die: Duration,
-// }
+    fn take_fork(fork: &Arc<Mutex<usize>>) -> MutexGuard<usize> {
+        let mut guard = fork.lock().unwrap();
+        *guard += 1;
+        guard
+    }
 
-// #[derive(Debug, Default)]
+    fn drop_fork(fork_guard: &Arc<Mutex<usize>>) {
+        drop(fork_guard)
+    }
+}
+
+#[derive(Debug, Default)]
+struct Instructions {
+    time_to_sleep: Duration,
+    time_to_eat: Duration,
+    time_to_die: Duration,
+}
+
+impl Instructions {
+    fn new(tts: &str, tte: &str, ttd: &str) -> Result<Self, String> {
+        let tts: u64 = match tts.parse() {
+            Ok(tts) => tts,
+            _ => return Err("error parsing time to sleep to A integer".to_string()),
+        };
+        let tte: u64 = match tte.parse() {
+            Ok(tts) => tts,
+            _ => return Err("error parsing time to eat to A integer".to_string()),
+        };
+        let ttd: u64 = match ttd.parse() {
+            Ok(tts) => tts,
+            _ => return Err("error parsing time to die to A integer".to_string()),
+        };
+        Ok(Instructions {
+            time_to_sleep: Duration::from_millis(tts),
+            time_to_eat: Duration::from_millis(tte),
+            time_to_die: Duration::from_millis(ttd),
+        })
+    }
+}
+
+type MInstant = Arc<Mutex<Instant>>;
+
+// #[derive(Debug, Clone)]
 // struct Philo {
-//     id: u32,
+//     id: usize,
+//     last_meal: MInstant,
+// }
+
+// impl Philo {
+//     fn new(id: usize, last_meal: Instant) -> Self {
+//         Philo {
+//             id,
+//             last_meal: Arc::new(Mutex::new(last_meal)),
+//         }
+//     }
+
+//     fn last_meal(&self) -> MInstant {
+//         Arc::clone(&self.last_meal)
+//     }
 // }
 
 fn main() {
-    // let fork = Arc::new(Mutex::new(0));
-    // let fork2 = Arc::new(Mutex::new(0));
-
-    // let take_fork = Arc::clone(&fork);
-    // let take_fork_2 = Arc::clone(&fork2);
-    // let h1 = thread::spawn(move || {
-    //     let mut a = take_fork.lock().unwrap();
-    //     println!("philo1 took fork 1");
-    //     let mut b = take_fork_2.lock().unwrap();
-    //     println!("philo1 took fork 2");
-    //     thread::sleep(Duration::from_secs(1));
-    //     *a += 1;
-    //     *b += 1;
-    // });
-    // let take_fork = Arc::clone(&fork);
-    // let take_fork_2 = Arc::clone(&fork2);
-    // let h2 = thread::spawn(move || {
-    //     let mut a = take_fork.lock().unwrap();
-    //     println!("philo2 took fork 1");
-    //     let mut b = take_fork_2.lock().unwrap();
-    //     println!("philo2 took fork 2");
-    //     thread::sleep(Duration::from_secs(1));
-    //     *a += 1;
-    //     *b += 1;
+    // tokio::spawn(async move {
+    //     loop {
+    //         println!("test");
+    //     }
     // });
 
-    // h1.join().unwrap();
-    // h2.join().unwrap();
-    // println!("{} {}", fork.lock().unwrap(), fork2.lock().unwrap());
-    let fork = Arc::new(Mutex::new(0));
-    // let fork2 = Arc::new(Mutex::new(0));
-    println!("starting the simulation");
+    // loop {
+    //     println!("hello");
+    // }
+
+    let start = Instant::now();
+
+    // // thread::sleep(Duration::from_secs(2));
+    // // println!("{} s", start.elapsed().as_millis());
+    let args = args().collect::<Vec<String>>();
+    if args.len() != 5 {
+        return println!("wrong nums of args");
+    };
+    let nums_of_philos = match args[1].parse() {
+        Ok(nums_of_philos) => nums_of_philos,
+        _ => return println!("error parsing nums of philos to A integer"),
+    };
+    let time_to_sleep = &args[2];
+    let time_to_eat = &args[3];
+    let time_to_die = &args[4];
+
+    let forks = ForksPool::init(nums_of_philos);
+
+    let instructions = match Instructions::new(&time_to_sleep, &time_to_eat, &time_to_die) {
+        Ok(instructions) => instructions,
+        Err(error) => return println!("{error}"),
+    };
+
     let mut handlers = Vec::new();
-    (0..5).for_each(|id| {
-        let fork_mutex = Arc::clone(&fork);
-        handlers.push(thread::spawn(move || loop {
-            let mut a = fork_mutex.lock().unwrap();
-            println!("philo {id} took a fork");
-            thread::sleep(Duration::from_secs(1));
-            *a = 0;
-            drop(a);
-            thread::sleep(Duration::from_secs(1));
+    (0..nums_of_philos).for_each(|id| {
+        let fork1 = forks.get(id);
+        let fork2 = forks.get((id + 1) % nums_of_philos);
+        handlers.push(thread::spawn(move || {
+            if id % 2 == 0 {
+                thread::sleep(Duration::from_millis(2000));
+            }
+            // let last_meal = Arc::new(Mutex::new(Instant::now()));
+            // let last_meal_checker = Arc::clone(&last_meal);
+            // let checker = thread::spawn(move || loop {
+            //     if last_meal_checker.lock().unwrap().elapsed() > instructions.time_to_die {
+            //         thread::sleep(Duration::from_millis(100));
+            //         println!("dead {id}");
+            //         process::exit(1);
+            //     }
+            // });
+
+            // let last_meal_philo = Arc::clone(&last_meal);
+            loop {
+                let guard1 = ForksPool::take_fork(&fork1);
+                println!("philo {} took a left fork", id + 1);
+                let guard2 = ForksPool::take_fork(&fork2);
+                println!("philo {} took a right fork", id + 1);
+                // *last_meal_philo.lock().unwrap() = Instant::now();
+
+                println!("philo {} is eating", id + 1);
+                thread::sleep(instructions.time_to_eat);
+                ForksPool::drop_fork(&fork1);
+                ForksPool::drop_fork(&fork2);
+                println!("philo {} is sleeping", id + 1);
+                thread::sleep(instructions.time_to_sleep);
+                println!("philo {} is thinking", id + 1);
+                // println!(
+                //     "{id} {}",
+                //     last_meal_philo.lock().unwrap().elapsed().as_millis()
+                // );
+            }
         }))
     });
 
-    println!("joining");
     for handler in handlers {
         handler.join().unwrap();
     }
-    println!("end of the simulation");
-    println!("{}", fork.lock().unwrap());
-    // // println!("{}", fork2.lock().unwrap());
-    // println!("joined");
-
-    // let x = Arc::new(Mutex::new(0));
-    //  println!("starting the simulation");
-    //  let mut handlers = Vec::new();
-    //  (0..100).for_each(|id| {
-    //      // println!("creating thread {id}");
-    //      let x_mutex = Arc::clone(&x);
-    //      handlers.push(thread::spawn(move || {
-    //          for _ in 0..10000 {
-    //              let mut x_data = x_mutex.lock().unwrap();
-    //              *x_data += 1;
-    //              println!("changing x in {}", id);
-    //              thread::sleep(Duration::from_secs(1));
-    //              drop(x_data);
-    //              thread::sleep(Duration::from_secs(1));
-    //          }
-    //      }))
-    //  });
-
-    //  println!("joining");
-    //  for handler in handlers {
-    //      handler.join().unwrap();
-    //  }
-    //  println!("end of the simulation");
-    //  println!("{}", x.lock().unwrap());
-    //  println!("joined");
 }
