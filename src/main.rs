@@ -1,3 +1,5 @@
+// Failed to fetch latest release from GitHub API. Refer to :h mason-errors-github-api for more information.
+
 #![allow(unused)]
 
 use std::env::args;
@@ -41,7 +43,7 @@ struct Instructions {
 }
 
 impl Instructions {
-    fn new(tts: &str, tte: &str, ttd: &str) -> Result<Self, String> {
+    fn new(ttd: &str, tte: &str, tts: &str) -> Result<Self, String> brew install node{
         let tts: u64 = match tts.parse() {
             Ok(tts) => tts,
             _ => return Err("error parsing time to sleep to A integer".to_string()),
@@ -84,20 +86,11 @@ type MInstant = Arc<Mutex<Instant>>;
 // }
 
 fn main() {
-    // tokio::spawn(async move {
-    //     loop {
-    //         println!("test");
-    //     }
-    // });
-
-    // loop {
-    //     println!("hello");
-    // }
-
     let start = Instant::now();
 
-    // // thread::sleep(Duration::from_secs(2));
-    // // println!("{} s", start.elapsed().as_millis());
+    // thread::sleep(Duration::from_secs(2));
+    // println!("{} s", start.elapsed().as_millis());
+
     let args = args().collect::<Vec<String>>();
     if args.len() != 5 {
         return println!("wrong nums of args");
@@ -106,9 +99,9 @@ fn main() {
         Ok(nums_of_philos) => nums_of_philos,
         _ => return println!("error parsing nums of philos to A integer"),
     };
-    let time_to_sleep = &args[2];
+    let time_to_die = &args[2];
     let time_to_eat = &args[3];
-    let time_to_die = &args[4];
+    let time_to_sleep = &args[4];
 
     let forks = ForksPool::init(nums_of_philos);
 
