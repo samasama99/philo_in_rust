@@ -1,20 +1,17 @@
-// Failed to fetch latest release from GitHub API. Refer to :h mason-errors-github-api for more information.
-
-#![allow(unused)]
-
+// #![allow(unused)]
 use std::env::args;
-use std::sync::atomic::AtomicI8;
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread;
 use std::time::{Duration, Instant};
-use std::{process, thread};
-// use tokio::*;
-// use tokio::{client, Result};
+
+type MInstant = Arc<Mutex<Instant>>;
 
 struct ForksPool {
     forks: Vec<Arc<Mutex<usize>>>,
 }
 
+/// hello
 impl ForksPool {
     fn init(nums_of_philos: usize) -> Self {
         let forks: Vec<Arc<Mutex<usize>>> = (0..nums_of_philos)
@@ -27,10 +24,7 @@ impl ForksPool {
     }
 
     fn take_fork(fork: &Arc<Mutex<usize>>) -> MutexGuard<usize> {
-        let new_fork = Arc::clone(fork);
-        let mut guard = fork.lock().unwrap();
-        *guard += 1;
-        guard
+        fork.lock().unwrap()
     }
 
     fn drop_fork(fork_guard: MutexGuard<usize>) {
@@ -67,8 +61,8 @@ impl Instructions {
     }
 }
 
-fn safe_print<'a>(action: &'a str, id: usize, start_time: Instant, mutex: &'a Arc<Mutex<usize>>) {
-    let print_guard = mutex.lock().unwrap();
+fn safe_print(action: &str, id: usize, start_time: Instant, mutex: &Arc<Mutex<usize>>) {
+    let _print_guard = mutex.lock().unwrap();
     println!(
         "{} philo {} {action}",
         start_time.elapsed().as_millis(),
@@ -76,12 +70,9 @@ fn safe_print<'a>(action: &'a str, id: usize, start_time: Instant, mutex: &'a Ar
     );
 }
 
-fn update_time(time: &Arc<Mutex<Instant>>) {
-    let mut guard = time.lock().unwrap();
-    *guard = Instant::now();
+fn update_time(time: &MInstant) {
+    *time.lock().unwrap() = Instant::now();
 }
-
-type MInstant = Arc<Mutex<Instant>>;
 
 fn main() {
     let args = args().collect::<Vec<String>>();
@@ -102,48 +93,46 @@ fn main() {
     let forks = ForksPool::init(nums_of_philos);
     let p_mutex = Arc::new(Mutex::new(0));
     let start_time = Instant::now();
-    let handlers: Vec<_> = (0..nums_of_philos)
-        .map(|id| {
-            let fork1 = forks.get(id);
-            let fork2 = forks.get((id + 1) % nums_of_philos);
-            let p_mutex_checker = Arc::clone(&p_mutex);
-            let p_mutex = Arc::clone(&p_mutex);
-            let tx = tx.clone();
-            thread::spawn(move || {
-                let last_meal = Arc::new(Mutex::new(Instant::now()));
-                let last_meal_checker = Arc::clone(&last_meal);
-                if id % 2 == 0 {
-                    thread::sleep(Duration::from_millis(5));
-                }
-                thread::spawn(move || loop {
-                    thread::sleep(Duration::from_millis(5));
-                    if last_meal_checker.lock().unwrap().elapsed() > instructions.time_to_die {
-                        let p_guard = p_mutex_checker.lock().unwrap();
-                        println!("{} philo {id} is dead ", start_time.elapsed().as_millis());
-                        tx.send(()).expect("Could not send signal on channel.");
-                        loop {
-                            thread::sleep(Duration::from_secs(u64::MAX));
-                        }
+    (0..nums_of_philos).for_each(|id| {
+        let fork1 = forks.get(id);
+        let fork2 = forks.get((id + 1) % nums_of_philos);
+        let p_mutex_checker = Arc::clone(&p_mutex);
+        let p_mutex = Arc::clone(&p_mutex);
+        let tx = tx.clone();
+        thread::spawn(move || {
+            let last_meal = Arc::new(Mutex::new(Instant::now()));
+            let last_meal_checker = Arc::clone(&last_meal);
+            if id % 2 == 0 {
+                thread::sleep(Duration::from_millis(5));
+            }
+            thread::spawn(move || loop {
+                thread::sleep(Duration::from_millis(5));
+                if last_meal_checker.lock().unwrap().elapsed() > instructions.time_to_die {
+                    let _print_guard = p_mutex_checker.lock().unwrap();
+                    println!("{} philo {id} is dead ", start_time.elapsed().as_millis());
+                    tx.send(()).expect("Could not send signal on channel.");
+                    loop {
+                        thread::sleep(Duration::from_secs(u64::MAX));
                     }
-                });
-
-                loop {
-                    let guard1 = ForksPool::take_fork(&fork1);
-                    safe_print("took a left fork", id, start_time, &p_mutex);
-                    let guard2 = ForksPool::take_fork(&fork2);
-                    safe_print("took a right fork", id, start_time, &p_mutex);
-                    update_time(&last_meal);
-                    safe_print("is eating", id, start_time, &p_mutex);
-                    thread::sleep(instructions.time_to_eat);
-                    ForksPool::drop_fork(guard1);
-                    ForksPool::drop_fork(guard2);
-                    safe_print("is sleeping", id, start_time, &p_mutex);
-                    thread::sleep(instructions.time_to_sleep);
-                    safe_print("is thinking", id, start_time, &p_mutex);
                 }
-            })
-        })
-        .collect();
+            });
+
+            loop {
+                let guard1 = ForksPool::take_fork(&fork1);
+                safe_print("took a left fork", id, start_time, &p_mutex);
+                let guard2 = ForksPool::take_fork(&fork2);
+                safe_print("took a right fork", id, start_time, &p_mutex);
+                update_time(&last_meal);
+                safe_print("is eating", id, start_time, &p_mutex);
+                thread::sleep(instructions.time_to_eat);
+                ForksPool::drop_fork(guard1);
+                ForksPool::drop_fork(guard2);
+                safe_print("is sleeping", id, start_time, &p_mutex);
+                thread::sleep(instructions.time_to_sleep);
+                safe_print("is thinking", id, start_time, &p_mutex);
+            }
+        });
+    });
 
     rx.recv().expect("Could not receive from channel.");
 }
