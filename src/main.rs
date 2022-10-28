@@ -1,41 +1,176 @@
 // #![allow(unused)]
 use std::env::args;
 use std::str::FromStr;
-use std::sync::mpsc::channel;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
 
 type MInstant = Arc<Mutex<Instant>>;
 
-struct ForksPool {
-    forks: Vec<Arc<Mutex<usize>>>,
+type Fork = Arc<Mutex<u64>>;
+
+struct Philo {
+    id: u64,
+    last_meal: MInstant,
+    philos_meals: Arc<Mutex<u64>>,
+    start_time: Instant,
+    instructions: Instructions,
+    print_mutex: Arc<Mutex<u8>>,
+    left_fork: Fork,
+    right_fork: Fork,
+    meals: u64,
 }
 
-/// hello
+impl Philo {
+    fn born(
+        id: u64,
+        left_fork: Fork,
+        right_fork: Fork,
+        print_mutex: Arc<Mutex<u8>>,
+        philos_meals: Arc<Mutex<u64>>,
+        start_time: Instant,
+        instructions: Instructions,
+        tx: Sender<()>,
+    ) -> Self {
+        let last_meal = Arc::new(Mutex::new(Instant::now()));
+        let last_meal_checker = Arc::clone(&last_meal);
+        let print_mutex_checker = Arc::clone(&print_mutex);
+        let philos_meals_checker = Arc::clone(&philos_meals);
+        let philo = Self {
+            id,
+            last_meal,
+            philos_meals,
+            start_time,
+            instructions,
+            print_mutex,
+            left_fork,
+            right_fork,
+            meals: 0,
+        };
+        thread::spawn(move || loop {
+            thread::sleep(Duration::from_millis(10));
+            if instructions.must_eat.is_some()
+                && *philos_meals_checker.lock().unwrap() == instructions.nums_of_philos
+            {
+                let _print_guard = print_mutex_checker.lock().unwrap();
+                tx.send(()).expect("Could not send signal on channel.");
+                loop {
+                    thread::sleep(Duration::from_secs(u64::MAX));
+                }
+            };
+            if last_meal_checker.lock().unwrap().elapsed() > instructions.time_to_die {
+                let _print_guard = print_mutex_checker.lock().unwrap();
+                println!("{} philo {id} is dead ", start_time.elapsed().as_millis());
+                tx.send(()).expect("Could not send signal on channel.");
+                thread::sleep(Duration::from_secs(u64::MAX));
+            }
+        });
+        philo
+    }
+
+    fn eat(&mut self) {
+        let guard1 = ForksPool::take_fork(&self.left_fork);
+        safe_print("took a fork", self.id, self.start_time, &self.print_mutex);
+        let guard2 = ForksPool::take_fork(&self.right_fork);
+        safe_print("took a fork", self.id, self.start_time, &self.print_mutex);
+        update_time(&self.last_meal);
+        safe_print("is eating", self.id, self.start_time, &self.print_mutex);
+        if let Some(must_eat) = self.instructions.must_eat {
+            self.meals += 1;
+            if must_eat == self.meals {
+                *self.philos_meals.lock().unwrap() += 1;
+            }
+        };
+        thread::sleep(self.instructions.time_to_eat);
+        ForksPool::drop_fork(guard1);
+        ForksPool::drop_fork(guard2);
+    }
+
+    fn sleep(&self) {
+        safe_print("is sleeping", self.id, self.start_time, &self.print_mutex);
+        thread::sleep(self.instructions.time_to_sleep);
+    }
+
+    fn think(self: &Self) {
+        safe_print("is thinking", self.id, self.start_time, &self.print_mutex);
+    }
+}
+
+struct PhiloMaker {
+    nums_of_philos: u64,
+    forks: ForksPool,
+    print_mutex: Arc<Mutex<u8>>,
+    philos_meals: Arc<Mutex<u64>>,
+    start_time: Instant,
+    initialised: bool,
+    philos_made: u64,
+    instructions: Instructions,
+    tx: Sender<()>,
+}
+
+impl PhiloMaker {
+    fn init(instructions: Instructions) -> (Self, Receiver<()>) {
+        let (tx, rx) = channel();
+
+        (
+            Self {
+                nums_of_philos: instructions.nums_of_philos,
+                forks: ForksPool::init(instructions.nums_of_philos),
+                start_time: Instant::now(),
+                print_mutex: Arc::new(Mutex::new(0)),
+                philos_meals: Arc::new(Mutex::new(0)),
+                initialised: true,
+                philos_made: 0,
+                instructions,
+                tx,
+            },
+            rx,
+        )
+    }
+    fn make(self: &mut Self) -> Philo {
+        assert!(self.initialised);
+        self.philos_made += 1;
+        Philo::born(
+            self.philos_made,
+            self.forks.get(self.philos_made - 1),
+            self.forks.get(self.philos_made % self.nums_of_philos),
+            Arc::clone(&self.print_mutex),
+            Arc::clone(&self.philos_meals),
+            self.start_time,
+            self.instructions,
+            self.tx.clone(),
+        )
+    }
+}
+
+struct ForksPool {
+    forks: Vec<Arc<Mutex<u64>>>,
+}
+
 impl ForksPool {
-    fn init(nums_of_philos: usize) -> Self {
-        let forks: Vec<Arc<Mutex<usize>>> = (0..nums_of_philos)
+    fn init(nums_of_philos: u64) -> Self {
+        let forks: Vec<Arc<Mutex<u64>>> = (0..nums_of_philos)
             .map(|_| Arc::new(Mutex::new(0)))
             .collect();
         ForksPool { forks }
     }
-    fn get(&self, id: usize) -> Arc<Mutex<usize>> {
-        Arc::clone(&self.forks[id])
+    fn get(&self, id: u64) -> Arc<Mutex<u64>> {
+        Arc::clone(&self.forks[id as usize])
     }
 
-    fn take_fork(fork: &Arc<Mutex<usize>>) -> MutexGuard<usize> {
+    fn take_fork(fork: &Arc<Mutex<u64>>) -> MutexGuard<u64> {
         fork.lock().unwrap()
     }
 
-    fn drop_fork(fork_guard: MutexGuard<usize>) {
+    fn drop_fork(fork_guard: MutexGuard<u64>) {
         drop(fork_guard)
     }
 }
 
 #[derive(Debug, Default, Clone, Copy)]
 struct Instructions {
-    nums_of_philos: usize,
+    nums_of_philos: u64,
     time_to_die: Duration,
     time_to_eat: Duration,
     time_to_sleep: Duration,
@@ -58,7 +193,7 @@ impl Instructions {
         must_eat: Option<&String>,
     ) -> Result<Self, String> {
         Ok(Instructions {
-            nums_of_philos: string_to(nums_of_philos, "error parsing nums of philos")?,
+            nums_of_philos: string_to::<u64>(nums_of_philos, "error parsing nums of philos")?,
             time_to_die: Duration::from_millis(string_to(ttd, "error parsing time to die")?),
             time_to_eat: Duration::from_millis(string_to(tte, "error parsing time to sleep")?),
             time_to_sleep: Duration::from_millis(string_to(tts, "error parsing time to eat")?),
@@ -73,7 +208,7 @@ impl Instructions {
     }
 }
 
-fn safe_print(action: &str, id: usize, start_time: Instant, mutex: &Arc<Mutex<usize>>) {
+fn safe_print(action: &str, id: u64, start_time: Instant, mutex: &Arc<Mutex<u8>>) {
     let _print_guard = mutex.lock().unwrap();
     println!(
         "{} philo {} {action}",
@@ -94,77 +229,24 @@ fn main() {
         _ => return println!("wrong nums of args {{num, die, eat, sleep}}"),
     };
 
-    let instructions = match Instructions::new(&args[1], &args[2], &args[3], &args[4], args.get(5))
-    {
+    let info = match Instructions::new(&args[1], &args[2], &args[3], &args[4], args.get(5)) {
         Ok(instructions) => instructions,
         Err(error) => return println!("{error}"),
     };
 
-    let (tx, rx) = channel();
-    let forks = ForksPool::init(instructions.nums_of_philos);
-    let p_mutex = Arc::new(Mutex::new(0));
-    let must_eat_rec = Arc::new(Mutex::new(0));
-    let start_time = Instant::now();
-    (0..instructions.nums_of_philos).for_each(|id| {
-        let fork1 = forks.get(id);
-        let fork2 = forks.get((id + 1) % instructions.nums_of_philos);
-        let p_mutex = Arc::clone(&p_mutex);
-        let must_eat_rec = Arc::clone(&must_eat_rec);
-        let tx = tx.clone();
+    let (mut philo_maker, rx) = PhiloMaker::init(info);
+
+    for _ in 0..info.nums_of_philos {
+        let mut philo = philo_maker.make();
         thread::spawn(move || {
-            if id % 2 == 0 {
-                thread::sleep(Duration::from_millis(5));
-            }
-
-            let last_meal = Arc::new(Mutex::new(Instant::now()));
-            let last_meal_checker = Arc::clone(&last_meal);
-            let p_mutex_checker = Arc::clone(&p_mutex);
-            let must_eat_rec_checker = Arc::clone(&must_eat_rec);
-            let mut philo_eat = 0;
-
-            thread::spawn(move || loop {
-                thread::sleep(Duration::from_millis(5));
-                if instructions.must_eat.is_some()
-                    && *must_eat_rec_checker.lock().unwrap() == instructions.nums_of_philos
-                {
-                    let _print_guard = p_mutex_checker.lock().unwrap();
-                    tx.send(()).expect("Could not send signal on channel.");
-                    loop {
-                        thread::sleep(Duration::from_secs(u64::MAX));
-                    }
-                };
-                if last_meal_checker.lock().unwrap().elapsed() > instructions.time_to_die {
-                    let _print_guard = p_mutex_checker.lock().unwrap();
-                    println!("{} philo {id} is dead ", start_time.elapsed().as_millis());
-                    tx.send(()).expect("Could not send signal on channel.");
-                    loop {
-                        thread::sleep(Duration::from_secs(u64::MAX));
-                    }
-                }
-            });
-
+            thread::sleep(Duration::from_millis(5));
             loop {
-                let guard2 = ForksPool::take_fork(&fork2);
-                safe_print("took a right fork", id, start_time, &p_mutex);
-                let guard1 = ForksPool::take_fork(&fork1);
-                safe_print("took a left fork", id, start_time, &p_mutex);
-                update_time(&last_meal);
-                safe_print("is eating", id, start_time, &p_mutex);
-                if let Some(must_eat) = instructions.must_eat {
-                    philo_eat += 1;
-                    if must_eat == philo_eat {
-                        *must_eat_rec.lock().unwrap() += 1;
-                    }
-                };
-                thread::sleep(instructions.time_to_eat);
-                ForksPool::drop_fork(guard1);
-                ForksPool::drop_fork(guard2);
-                safe_print("is sleeping", id, start_time, &p_mutex);
-                thread::sleep(instructions.time_to_sleep);
-                safe_print("is thinking", id, start_time, &p_mutex);
+                philo.eat();
+                philo.sleep();
+                philo.think();
             }
         });
-    });
+    }
 
     rx.recv().expect("Could not receive from channel.");
 }
