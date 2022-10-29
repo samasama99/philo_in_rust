@@ -8,7 +8,9 @@ use std::time::{Duration, Instant};
 
 type MInstant = Arc<Mutex<Instant>>;
 
-type Fork = Arc<Mutex<u64>>;
+type MPrint = Arc<Mutex<()>>;
+
+type Fork = Arc<Mutex<()>>;
 
 struct Philo {
     id: u64,
@@ -16,7 +18,7 @@ struct Philo {
     philos_meals: Arc<Mutex<u64>>,
     start_time: Instant,
     instructions: Instructions,
-    print_mutex: Arc<Mutex<u8>>,
+    print_mutex: MPrint,
     left_fork: Fork,
     right_fork: Fork,
     meals: u64,
@@ -25,9 +27,8 @@ struct Philo {
 impl Philo {
     fn born(
         id: u64,
-        left_fork: Fork,
-        right_fork: Fork,
-        print_mutex: Arc<Mutex<u8>>,
+        (left_fork, right_fork): (Fork, Fork),
+        print_mutex: MPrint,
         philos_meals: Arc<Mutex<u64>>,
         start_time: Instant,
         instructions: Instructions,
@@ -69,6 +70,15 @@ impl Philo {
         philo
     }
 
+    fn increment_meals(meals: &mut u64, philos_meals: Arc<Mutex<u64>>, instructions: Instructions) {
+        if let Some(must_eat) = instructions.must_eat {
+            *meals += 1;
+            if must_eat == *meals {
+                *philos_meals.lock().unwrap() += 1;
+            }
+        };
+    }
+
     fn eat(&mut self) {
         let guard1 = ForksPool::take_fork(&self.left_fork);
         safe_print("took a fork", self.id, self.start_time, &self.print_mutex);
@@ -76,12 +86,12 @@ impl Philo {
         safe_print("took a fork", self.id, self.start_time, &self.print_mutex);
         update_time(&self.last_meal);
         safe_print("is eating", self.id, self.start_time, &self.print_mutex);
-        if let Some(must_eat) = self.instructions.must_eat {
-            self.meals += 1;
-            if must_eat == self.meals {
-                *self.philos_meals.lock().unwrap() += 1;
-            }
-        };
+
+        Self::increment_meals(
+            &mut self.meals,
+            Arc::clone(&self.philos_meals),
+            self.instructions,
+        );
         thread::sleep(self.instructions.time_to_eat);
         ForksPool::drop_fork(guard1);
         ForksPool::drop_fork(guard2);
@@ -92,7 +102,7 @@ impl Philo {
         thread::sleep(self.instructions.time_to_sleep);
     }
 
-    fn think(self: &Self) {
+    fn think(&self) {
         safe_print("is thinking", self.id, self.start_time, &self.print_mutex);
     }
 }
@@ -100,7 +110,7 @@ impl Philo {
 struct PhiloMaker {
     nums_of_philos: u64,
     forks: ForksPool,
-    print_mutex: Arc<Mutex<u8>>,
+    print_mutex: MPrint,
     philos_meals: Arc<Mutex<u64>>,
     start_time: Instant,
     initialised: bool,
@@ -118,7 +128,7 @@ impl PhiloMaker {
                 nums_of_philos: instructions.nums_of_philos,
                 forks: ForksPool::init(instructions.nums_of_philos),
                 start_time: Instant::now(),
-                print_mutex: Arc::new(Mutex::new(0)),
+                print_mutex: Arc::new(Mutex::new(())),
                 philos_meals: Arc::new(Mutex::new(0)),
                 initialised: true,
                 philos_made: 0,
@@ -128,13 +138,16 @@ impl PhiloMaker {
             rx,
         )
     }
-    fn make(self: &mut Self) -> Philo {
+    fn make(&mut self) -> Philo {
         assert!(self.initialised);
         self.philos_made += 1;
+        let id = self.philos_made;
         Philo::born(
-            self.philos_made,
-            self.forks.get(self.philos_made - 1),
-            self.forks.get(self.philos_made % self.nums_of_philos),
+            id,
+            (
+                self.forks.get(id - 1),
+                self.forks.get(id % self.nums_of_philos),
+            ),
             Arc::clone(&self.print_mutex),
             Arc::clone(&self.philos_meals),
             self.start_time,
@@ -145,25 +158,25 @@ impl PhiloMaker {
 }
 
 struct ForksPool {
-    forks: Vec<Arc<Mutex<u64>>>,
+    forks: Vec<Fork>,
 }
 
 impl ForksPool {
     fn init(nums_of_philos: u64) -> Self {
-        let forks: Vec<Arc<Mutex<u64>>> = (0..nums_of_philos)
-            .map(|_| Arc::new(Mutex::new(0)))
+        let forks: Vec<Fork> = (0..nums_of_philos)
+            .map(|_| Arc::new(Mutex::new(())))
             .collect();
         ForksPool { forks }
     }
-    fn get(&self, id: u64) -> Arc<Mutex<u64>> {
+    fn get(&self, id: u64) -> Fork {
         Arc::clone(&self.forks[id as usize])
     }
 
-    fn take_fork(fork: &Arc<Mutex<u64>>) -> MutexGuard<u64> {
+    fn take_fork(fork: &Fork) -> MutexGuard<()> {
         fork.lock().unwrap()
     }
 
-    fn drop_fork(fork_guard: MutexGuard<u64>) {
+    fn drop_fork(fork_guard: MutexGuard<()>) {
         drop(fork_guard)
     }
 }
@@ -208,8 +221,8 @@ impl Instructions {
     }
 }
 
-fn safe_print(action: &str, id: u64, start_time: Instant, mutex: &Arc<Mutex<u8>>) {
-    let _print_guard = mutex.lock().unwrap();
+fn safe_print(action: &str, id: u64, start_time: Instant, print_mutex: &MPrint) {
+    let _print_guard = print_mutex.lock().unwrap();
     println!(
         "{} philo {} {action}",
         start_time.elapsed().as_millis(),
