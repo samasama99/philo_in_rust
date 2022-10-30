@@ -12,6 +12,7 @@ type MPrint = Arc<Mutex<()>>;
 
 type Fork = Arc<Mutex<()>>;
 
+#[derive(Debug)]
 struct Philo {
     id: u64,
     last_meal: MInstant,
@@ -21,6 +22,7 @@ struct Philo {
     print_mutex: MPrint,
     left_fork: Fork,
     right_fork: Fork,
+    tx: Sender<()>,
     meals: u64,
 }
 
@@ -34,40 +36,59 @@ impl Philo {
         instructions: Instructions,
         tx: Sender<()>,
     ) -> Self {
-        let last_meal = Arc::new(Mutex::new(Instant::now()));
-        let last_meal_checker = Arc::clone(&last_meal);
-        let print_mutex_checker = Arc::clone(&print_mutex);
-        let philos_meals_checker = Arc::clone(&philos_meals);
-        let philo = Self {
+        Self {
             id,
-            last_meal,
+            last_meal: Arc::new(Mutex::new(Instant::now())),
             philos_meals,
             start_time,
             instructions,
             print_mutex,
             left_fork,
             right_fork,
+            tx,
             meals: 0,
-        };
+        }
+    }
+
+    fn start_life(mut self) {
+        let instructions = self.instructions;
+        let id = self.id;
+        let start_time = self.start_time;
+        let last_meal_checker = Arc::clone(&self.last_meal);
+        let print_mutex_checker = Arc::clone(&self.print_mutex);
+        let philos_meals_checker = Arc::clone(&self.philos_meals);
+        let tx_checker = self.tx.clone();
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(5));
+            loop {
+                self.eat();
+                self.sleep();
+                self.think();
+            }
+        });
+
         thread::spawn(move || loop {
             thread::sleep(Duration::from_millis(10));
             if instructions.must_eat.is_some()
                 && *philos_meals_checker.lock().unwrap() == instructions.nums_of_philos
             {
                 let _print_guard = print_mutex_checker.lock().unwrap();
-                tx.send(()).expect("Could not send signal on channel.");
+                tx_checker
+                    .send(())
+                    .expect("Could not send signal on channel.");
                 loop {
                     thread::sleep(Duration::from_secs(u64::MAX));
                 }
             };
             if last_meal_checker.lock().unwrap().elapsed() > instructions.time_to_die {
                 let _print_guard = print_mutex_checker.lock().unwrap();
-                println!("{} philo {id} is dead ", start_time.elapsed().as_millis());
-                tx.send(()).expect("Could not send signal on channel.");
+                println!("{} philo {} is dead ", start_time.elapsed().as_millis(), id);
+                tx_checker
+                    .send(())
+                    .expect("Could not send signal on channel.");
                 thread::sleep(Duration::from_secs(u64::MAX));
             }
         });
-        philo
     }
 
     fn increment_meals(meals: &mut u64, philos_meals: Arc<Mutex<u64>>, instructions: Instructions) {
@@ -107,6 +128,7 @@ impl Philo {
     }
 }
 
+#[derive(Debug)]
 struct PhiloMaker {
     nums_of_philos: u64,
     forks: ForksPool,
@@ -155,8 +177,16 @@ impl PhiloMaker {
             self.tx.clone(),
         )
     }
+
+    fn start_simulation(mut self) {
+        for _ in 0..self.instructions.nums_of_philos {
+            let philo = self.make();
+            philo.start_life();
+        }
+    }
 }
 
+#[derive(Debug)]
 struct ForksPool {
     forks: Vec<Fork>,
 }
@@ -223,11 +253,7 @@ impl Instructions {
 
 fn safe_print(action: &str, id: u64, start_time: Instant, print_mutex: &MPrint) {
     let _print_guard = print_mutex.lock().unwrap();
-    println!(
-        "{} philo {} {action}",
-        start_time.elapsed().as_millis(),
-        id + 1
-    );
+    println!("{} philo {} {action}", start_time.elapsed().as_millis(), id);
 }
 
 fn update_time(time: &MInstant) {
@@ -247,19 +273,9 @@ fn main() {
         Err(error) => return println!("{error}"),
     };
 
-    let (mut philo_maker, rx) = PhiloMaker::init(info);
+    dbg!(info);
 
-    for _ in 0..info.nums_of_philos {
-        let mut philo = philo_maker.make();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(5));
-            loop {
-                philo.eat();
-                philo.sleep();
-                philo.think();
-            }
-        });
-    }
-
+    let (philo_maker, rx) = PhiloMaker::init(info);
+    philo_maker.start_simulation();
     rx.recv().expect("Could not receive from channel.");
 }
