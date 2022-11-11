@@ -58,17 +58,15 @@ impl Philo {
         let print_mutex_checker = Arc::clone(&self.print_mutex);
         let philos_meals_checker = Arc::clone(&self.philos_meals);
         let tx_checker = self.tx.clone();
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(5));
-            loop {
-                self.eat();
-                self.sleep();
-                self.think();
-            }
+
+        thread::spawn(move || loop {
+            self.eat();
+            self.sleep();
+            self.think();
         });
 
         thread::spawn(move || loop {
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(5));
             if instructions.must_eat.is_some()
                 && *philos_meals_checker.lock().unwrap() == instructions.nums_of_philos
             {
@@ -76,9 +74,7 @@ impl Philo {
                 tx_checker
                     .send(())
                     .expect("Could not send signal on channel.");
-                loop {
-                    thread::sleep(Duration::from_secs(u64::MAX));
-                }
+                thread::sleep(Duration::from_secs(u64::MAX));
             };
             if last_meal_checker.lock().unwrap().elapsed() > instructions.time_to_die {
                 let _print_guard = print_mutex_checker.lock().unwrap();
@@ -105,15 +101,18 @@ impl Philo {
         safe_print("took a fork", self.id, self.start_time, &self.print_mutex);
         let guard2 = ForksPool::take_fork(&self.right_fork);
         safe_print("took a fork", self.id, self.start_time, &self.print_mutex);
-        update_time(&self.last_meal);
+
+        self.update_last_meal();
+
         safe_print("is eating", self.id, self.start_time, &self.print_mutex);
 
+        thread::sleep(self.instructions.time_to_eat);
         Self::increment_meals(
             &mut self.meals,
             Arc::clone(&self.philos_meals),
             self.instructions,
         );
-        thread::sleep(self.instructions.time_to_eat);
+
         ForksPool::drop_fork(guard1);
         ForksPool::drop_fork(guard2);
     }
@@ -125,6 +124,10 @@ impl Philo {
 
     fn think(&self) {
         safe_print("is thinking", self.id, self.start_time, &self.print_mutex);
+    }
+
+    fn update_last_meal(&self) {
+        *self.last_meal.lock().unwrap() = Instant::now();
     }
 }
 
@@ -251,22 +254,18 @@ impl Instructions {
     }
 }
 
+#[inline]
 fn safe_print(action: &str, id: u64, start_time: Instant, print_mutex: &MPrint) {
     let _print_guard = print_mutex.lock().unwrap();
     println!("{} philo {} {action}", start_time.elapsed().as_millis(), id);
 }
 
-fn update_time(time: &MInstant) {
-    *time.lock().unwrap() = Instant::now();
-}
-
 fn main() {
     let args: Vec<String> = args().collect();
 
-    match args.len() {
-        5 | 6 => (),
-        _ => return println!("wrong nums of args {{num, die, eat, sleep}}"),
-    };
+    if !(5..=6).contains(&args.len()) {
+        return println!("wrong nums of args {{num, die, eat, sleep}}");
+    }
 
     let info = match Instructions::new(&args[1], &args[2], &args[3], &args[4], args.get(5)) {
         Ok(instructions) => instructions,
