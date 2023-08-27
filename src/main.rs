@@ -256,7 +256,7 @@ impl Instructions {
 
 #[inline]
 fn safe_print(action: &str, id: u64, start_time: Instant, print_mutex: &MPrint) {
-    let _print_guard = print_mutex.lock().unwrap();
+    let _print_guard = print_mutex.lock().expect("safe_print failed");
     println!("{} philo {} {action}", start_time.elapsed().as_millis(), id);
 }
 
